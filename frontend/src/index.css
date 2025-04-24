@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@layer base {
+  body {
+    @apply bg-dark-darker text-white min-h-screen;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply px-4 py-2 rounded-lg font-semibold transition-all duration-300;
+  }
+  
+  .btn-primary {
+    @apply bg-primary hover:bg-primary-dark text-white shadow-glow hover:scale-105;
+  }
+  
+  .btn-secondary {
+    @apply bg-secondary hover:bg-secondary-dark text-white;
+  }
+  
+  .card {
+    @apply bg-dark p-6 rounded-xl shadow-lg;
+  }
+  
+  .input {
+    @apply bg-dark-lighter border border-gray-dark rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-primary;
+  }
+
+  .nav-link {
+    @apply text-gray-light hover:text-white transition-colors duration-300;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-dark-lighter;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-primary rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-primary-dark;
+}
