@@ -4,6 +4,7 @@ const { OAuth2Client } = require('google-auth-library');
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const auth = require('../middleware/auth');
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -11,11 +12,18 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 router.post('/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
+    console.log('Registration attempt for email:', email);
 
     // Check if user already exists
-    let user = await User.findOne({ email });
-    if (user) {
-      return res.status(400).json({ message: 'User already exists' });
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    console.log('Existing user check result:', existingUser ? 'User found' : 'No user found');
+
+    if (existingUser) {
+      console.log('Email already registered:', email);
+      return res.status(400).json({ 
+        error: 'Email already registered',
+        details: 'Please use a different email address or try logging in'
+      });
     }
 
     // Hash password
@@ -23,9 +31,9 @@ router.post('/register', async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, salt);
 
     // Create new user
-    user = await User.create({
+    const user = new User({
       name,
-      email,
+      email: email.toLowerCase(),
       password: hashedPassword,
       progress: new Map([
         ['loops', { completed: 0, total: 10 }],
@@ -36,27 +44,57 @@ router.post('/register', async (req, res) => {
       ])
     });
 
+    // Save user to database
+    await user.save();
+    console.log('New user created successfully:', user.email);
+
     // Generate JWT token
-    const jwtToken = jwt.sign(
+    const token = jwt.sign(
       { userId: user._id },
       process.env.JWT_SECRET,
-      { expiresIn: '7d' }
+      { expiresIn: '24h' }
     );
 
-    res.json({
-      token: jwtToken,
-      user: {
-        id: user._id,
-        email: user.email,
-        name: user.name,
-        profilePicture: user.profilePicture,
-        progress: user.progress,
-        preferredLanguage: user.preferredLanguage
-      }
+    // Return user data (excluding password)
+    const userData = user.toObject();
+    delete userData.password;
+
+    res.status(201).json({
+      message: 'Registration successful',
+      token,
+      user: userData
     });
   } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ message: 'Registration failed' });
+    console.error('Registration error details:', {
+      name: error.name,
+      code: error.code,
+      message: error.message,
+      stack: error.stack
+    });
+
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      console.log('Validation errors:', errors);
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: errors
+      });
+    }
+
+    // Handle duplicate key error
+    if (error.code === 11000) {
+      console.log('Duplicate key error for email');
+      return res.status(400).json({
+        error: 'Email already registered',
+        details: 'Please use a different email address or try logging in'
+      });
+    }
+
+    res.status(500).json({
+      error: 'Registration failed',
+      details: 'An unexpected error occurred. Please try again.'
+    });
   }
 });
 
@@ -64,15 +102,21 @@ router.post('/register', async (req, res) => {
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+    console.log('Login attempt for email:', email);
 
     if (!email || !password) {
       return res.status(400).json({ message: 'Please provide email and password' });
     }
 
     // Find user by email
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: email.toLowerCase() });
+    console.log('User lookup result:', user ? 'User found' : 'No user found');
+
     if (!user) {
-      return res.status(401).json({ message: 'Invalid email or password' });
+      return res.status(401).json({
+        error: 'Invalid credentials',
+        details: 'Email or password is incorrect'
+      });
     }
 
     // Check if user has password (Google users won't have password)
@@ -82,31 +126,37 @@ router.post('/login', async (req, res) => {
 
     // Compare password
     const isMatch = await bcrypt.compare(password, user.password);
+    console.log('Password match result:', isMatch ? 'Password matched' : 'Password did not match');
+
     if (!isMatch) {
-      return res.status(401).json({ message: 'Invalid email or password' });
+      return res.status(401).json({
+        error: 'Invalid credentials',
+        details: 'Email or password is incorrect'
+      });
     }
 
     // Generate JWT token
-    const jwtToken = jwt.sign(
+    const token = jwt.sign(
       { userId: user._id },
       process.env.JWT_SECRET,
-      { expiresIn: '7d' }
+      { expiresIn: '24h' }
     );
 
+    // Return user data (excluding password)
+    const userData = user.toObject();
+    delete userData.password;
+
     res.json({
-      token: jwtToken,
-      user: {
-        id: user._id,
-        email: user.email,
-        name: user.name,
-        profilePicture: user.profilePicture,
-        progress: user.progress,
-        preferredLanguage: user.preferredLanguage
-      }
+      message: 'Login successful',
+      token,
+      user: userData
     });
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ message: 'Authentication failed' });
+    res.status(500).json({
+      error: 'Login failed',
+      details: 'An unexpected error occurred. Please try again.'
+    });
   }
 });
 
@@ -256,6 +306,26 @@ router.get('/google', async (req, res) => {
   } catch (error) {
     console.error('Google auth error:', error);
     res.redirect('/login?error=auth_failed');
+  }
+});
+
+// Get current user
+router.get('/me', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId).select('-password');
+    if (!user) {
+      return res.status(404).json({
+        error: 'User not found',
+        details: 'The requested user does not exist'
+      });
+    }
+    res.json(user);
+  } catch (error) {
+    console.error('Get user error:', error);
+    res.status(500).json({
+      error: 'Failed to get user data',
+      details: 'An unexpected error occurred. Please try again.'
+    });
   }
 });
 
